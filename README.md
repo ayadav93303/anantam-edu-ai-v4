@@ -1,12 +1,13 @@
-# Anantam Edu AI V4
+# Anantam Edu AI — Updated
 
-Gemini-powered student AI assistant.
+Includes:
+- Image upload and camera input
+- Android microphone bridge
+- Local profile and chat history
+- Clean ChatGPT-style formatting and MathJax
+- Gemini text/vision backend
+- Optional Gemini native image generation via /api/generate-image
 
-## Render
-- Build: `npm install`
-- Start: `npm start`
-- Plan: Free
-- Environment variable: `GEMINI_API_KEY`
-- Optional: `GEMINI_MODEL=gpt-5.6-luna`
+The Gemini API key stays on Render. Do not commit secrets to GitHub.
 
-Never commit API keys. Keep the Gemini key in Render Environment Variables.
+Image generation uses Gemini's native image model and may require a paid API tier; normal text/vision can remain on the free tier subject to Google's limits.

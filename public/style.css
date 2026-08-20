@@ -24,3 +24,4 @@ body.light{--bg:#eef4ff;--card:rgba(255,255,255,.85);--card2:#fff;--text:#12213a
 .bubble blockquote{margin:12px 0}.bubble mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%;padding:2px 0}
 .note-card,.paper{font-size:15px;line-height:1.75}.note-card p,.paper p{margin:0 0 12px}.note-card h2,.note-card h3,.note-card h4,.paper h2,.paper h3,.paper h4{font-weight:800}
 .note-card table,.paper table{margin:12px 0}.note-card mjx-container,.paper mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.generated-image{display:block;width:min(100%,680px);max-height:720px;object-fit:contain;border-radius:16px;border:1px solid var(--line);margin:12px 0;background:#fff}

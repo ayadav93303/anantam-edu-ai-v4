@@ -73,41 +73,75 @@ async function askAI(message,image){
   return data.reply;
 }
 
+function setInputText(text){
+  const input=$("#chatInput");
+  if(input){ input.value=text; input.focus(); input.dispatchEvent(new Event("input",{bubbles:true})); }
+}
+
 function setupMic(){
-  const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
   const btn=$("#micBtn");
   if(!btn)return;
-  if(!SpeechRecognition){btn.title="Voice input is not supported on this browser";return;}
-  recognition=new SpeechRecognition(); recognition.lang="en-IN"; recognition.interimResults=true; recognition.continuous=false;
-  recognition.onstart=()=>{btn.classList.add("recording");setStatus("● Listening…")};
-  recognition.onend=()=>{btn.classList.remove("recording");setStatus("● Ready")};
-  recognition.onerror=()=>{btn.classList.remove("recording");setStatus("● Ready")};
-  recognition.onresult=e=>{let text="";for(let i=e.resultIndex;i<e.results.length;i++)text+=e.results[i][0].transcript;$("#chatInput").value=text};
-  btn.addEventListener("click",()=>{try{recognition.start()}catch{recognition.stop()}});
+  const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(SpeechRecognition){
+    recognition=new SpeechRecognition(); recognition.lang="en-IN"; recognition.interimResults=true; recognition.continuous=false;
+    recognition.onstart=()=>{btn.classList.add("recording");setStatus("● Listening…")};
+    recognition.onend=()=>{btn.classList.remove("recording");setStatus("● Ready")};
+    recognition.onerror=()=>{btn.classList.remove("recording");setStatus("● Ready")};
+    recognition.onresult=e=>{let text="";for(let i=e.resultIndex;i<e.results.length;i++)text+=e.results[i][0].transcript;setInputText(text)};
+    btn.addEventListener("click",()=>{try{recognition.start()}catch{try{recognition.stop()}catch{}}});
+  } else if(window.AndroidMic){
+    btn.addEventListener("click",()=>window.AndroidMic.start());
+  } else {
+    btn.title="Voice input is not supported here";
+  }
+}
+
+function loadImageFile(file){
+  if(!file)return;
+  if(!file.type.startsWith("image/")){alert("Please select an image.");return;}
+  if(file.size>8*1024*1024){alert("Please choose an image smaller than 8 MB.");return;}
+  const reader=new FileReader(); reader.onload=()=>{
+    pendingImage={mimeType:file.type,data:String(reader.result).split(",")[1],preview:reader.result};
+    const preview=$("#imagePreview"); if(preview){preview.src=reader.result;preview.parentElement.hidden=false;}
+  }; reader.readAsDataURL(file);
 }
 function setupImage(){
-  const input=$("#imageInput"), btn=$("#imageBtn"), preview=$("#imagePreview"), remove=$("#removeImage");
-  if(!input)return;
-  btn?.addEventListener("click",()=>input.click());
-  input.addEventListener("change",()=>{
-    const file=input.files?.[0]; if(!file)return;
-    if(!file.type.startsWith("image/")){alert("Please select an image.");return;}
-    const reader=new FileReader(); reader.onload=()=>{
-      pendingImage={mimeType:file.type,data:String(reader.result).split(",")[1],preview:reader.result};
-      preview.src=reader.result; preview.parentElement.hidden=false;
-    }; reader.readAsDataURL(file);
-  });
-  remove?.addEventListener("click",()=>{pendingImage=null;input.value="";preview.parentElement.hidden=true});
+  const input=$("#imageInput"), camera=$("#cameraInput"), btn=$("#imageBtn"), camBtn=$("#cameraBtn"), remove=$("#removeImage");
+  btn?.addEventListener("click",()=>input?.click());
+  camBtn?.addEventListener("click",()=>camera?.click());
+  input?.addEventListener("change",()=>{loadImageFile(input.files?.[0]);});
+  camera?.addEventListener("change",()=>{loadImageFile(camera.files?.[0]);});
+  remove?.addEventListener("click",()=>{pendingImage=null;if(input)input.value="";if(camera)camera.value="";$("#imagePreview").parentElement.hidden=true});
 }
+
+function looksLikeImageRequest(text=""){
+  return /\b(generate|create|make|draw|design|render|produce)\b.{0,30}\b(image|picture|photo|poster|wallpaper|illustration|diagram)\b/i.test(text) || /\b(image|picture|poster|wallpaper)\b.{0,25}\b(generate|create|make|draw|design)\b/i.test(text);
+}
+
+async function generateImage(prompt){
+  const r=await fetch(`${API_BASE}/api/generate-image`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt,profileName:profile.name})});
+  const data=await r.json(); if(!r.ok)throw new Error(data.error||"Image generation failed");
+  return data;
+}
+
+window.setAnantamSpeechText=setInputText;
 
 $("#chatForm")?.addEventListener("submit",async e=>{
   e.preventDefault(); const input=$("#chatInput"),question=input.value.trim();
   if(!question&&!pendingImage)return;
   const image=pendingImage; addMessage(question,true,{image:image?.preview}); input.value=""; input.disabled=true;
   const thinking=addMessage(`<span class="thinking">Thinking…</span>`);
-  try{const answer=await askAI(question,image);thinking.remove();addMessage(answer)}
-  catch(err){console.error(err);thinking.remove();addMessage(`<p>Sorry, I couldn't reach the AI right now. Please try again.</p>`)}
-  finally{pendingImage=null;$("#imageInput").value="";$("#imagePreview").parentElement.hidden=true;input.disabled=false;input.focus();setStatus("● Ready")}
+  try{
+    if(!image && looksLikeImageRequest(question)){
+      const data=await generateImage(question); thinking.remove();
+      const c=currentChat(); if(c.messages.length===0)c.title=question.slice(0,55);
+      const html=`<p>${esc(data.text||"Here is your generated image.")}</p><img class="generated-image" src="${data.imageData}" alt="Generated image">`;
+      c.messages.push({role:"user",text:question,html:question}); c.messages.push({role:"assistant",text:data.text||"",html}); saveChats(); addMessage(html); 
+    } else {
+      const answer=await askAI(question,image);thinking.remove();addMessage(answer);
+    }
+  } catch(err){console.error(err);thinking.remove();addMessage(`<p><strong>Sorry.</strong> ${esc(err.message||"I couldn't complete that request.")}</p>`)}
+  finally{pendingImage=null;$("#imageInput").value="";$("#cameraInput").value="";$("#imagePreview").parentElement.hidden=true;input.disabled=false;input.focus();setStatus("● Ready")}
 });
 
 function generateNotes(){

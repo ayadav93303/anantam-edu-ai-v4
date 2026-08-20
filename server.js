@@ -202,6 +202,48 @@ async function handleChat(req, res) {
   res.json({ reply: markdownToHtml(result.text), text: result.text, provider: result.provider });
 }
 
+
+
+// Native Gemini image generation (Nano Banana 2 / Gemini 3.1 Flash Image).
+// Image generation is separate from normal text generation and may require a paid API tier.
+const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image";
+
+async function generateGeminiImage(prompt) {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) throw new Error("GEMINI_API_KEY is not configured on Render.");
+  const r = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+    body: JSON.stringify({
+      model: GEMINI_IMAGE_MODEL,
+      input: String(prompt).slice(0, 5000),
+      response_format: { type: "image", mime_type: "image/png", aspect_ratio: "1:1", image_size: "1K" }
+    })
+  });
+  const raw = await r.text();
+  if (!r.ok) throw new Error(`Gemini image ${r.status}: ${raw.slice(0, 1600)}`);
+  const data = JSON.parse(raw);
+  const image = data.output_image;
+  if (!image || !image.data) throw new Error("Gemini did not return an image.");
+  return { text: "Here is your generated image.", imageData: `data:${image.mime_type || "image/png"};base64,${image.data}` };
+}
+
+app.post("/api/generate-image", async (req, res) => {
+  try {
+    const prompt = String(req.body.prompt || "").trim();
+    if (!prompt) return res.status(400).json({ error: "Please describe the image you want." });
+    console.log(`Image generation request: ${prompt.slice(0,120)}`);
+    const result = await generateGeminiImage(prompt);
+    res.json({ ...result, provider: "gemini-image", model: GEMINI_IMAGE_MODEL });
+  } catch (e) {
+    console.error("/api/generate-image error:", e);
+    const msg = /400|401|402|403|billing|quota|credit|payment/i.test(e.message)
+      ? "Image generation is not available on the current Gemini API tier. Text/image-question features can still work."
+      : "Image generation failed. Please try again.";
+    res.status(503).json({ error: msg, detail: e.message });
+  }
+});
+
 app.get("/api/health", (req, res) => {
   res.json({ ok: true, gemini: !!process.env.GEMINI_API_KEY, geminiModel: GEMINI_MODEL });
 });
