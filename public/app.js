@@ -1,6 +1,7 @@
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const chatHistory = [];
+const API_BASE = window.ANANTAM_API_URL || "https://anantam-edu-ai-v4.onrender.com";
 
 function show(id){
   $$(".screen").forEach(x=>x.classList.remove("active"));
@@ -29,7 +30,7 @@ function setStatus(text){if($("#status"))$("#status").textContent=text}
 
 async function askAI(message){
   setStatus("● Thinking…");
-  const r=await fetch("/api/chat",{
+  const r=await fetch(`${API_BASE}/api/chat`,{
     method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({message,history:chatHistory.slice(-8)})
   });
@@ -64,7 +65,7 @@ async function generateNotes(){
   const out=$("#noteOutput");
   out.innerHTML='<div class="note-card">Generating your notes…</div>';
   try{
-    const r=await fetch("/api/notes",{method:"POST",headers:{"Content-Type":"application/json"},
+    const r=await fetch(`${API_BASE}/api/notes`,{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         topic:$("#noteTopic").value.trim(),
         className:$("#noteClass").value,subject:$("#noteSubject").value,
@@ -79,7 +80,7 @@ async function generateExam(){
   const out=$("#examOutput");
   out.innerHTML='<div class="note-card">Preparing your question paper…</div>';
   try{
-    const r=await fetch("/api/exam",{method:"POST",headers:{"Content-Type":"application/json"},
+    const r=await fetch(`${API_BASE}/api/exam`,{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         className:$("#examClass").value,subject:$("#examSubject").value,
         marks:$("#marks").value,difficulty:$("#difficulty").value,
