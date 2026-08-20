@@ -82,7 +82,7 @@ async function gemini(messages, options = {}) {
     ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
     contents: messagesToGemini(messages),
     generationConfig: {
-      maxOutputTokens: options.maxOutputTokens ?? 1000,
+      maxOutputTokens: options.maxOutputTokens ?? 4096,
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {})
     }
   };
@@ -145,7 +145,7 @@ async function handleChat(req, res) {
     ...history.filter(x => ["user", "assistant"].includes(x.role)).map(x => ({ role: x.role, content: String(x.content).slice(0, 6000) })),
     { role: "user", content: message }
   ];
-  const result = await ai(messages, { maxOutputTokens: 1000 });
+  const result = await ai(messages, { maxOutputTokens: 4096 });
   console.log(`AI response provider: ${result.provider}`);
   res.json({ reply: markdownToHtml(result.text), text: result.text, provider: result.provider });
 }
@@ -162,8 +162,8 @@ app.post("/api/chat", async (req, res) => {
 app.post("/api/notes", async (req, res) => {
   try {
     const { topic="", className="", subject="", language="English" } = req.body;
-    const prompt = `Create exam-ready revision notes for ${className} ${subject}, topic "${topic}". Language: ${language}. Include definition/core idea, key points, important terms, examples or formulas if relevant, common exam points, and a 3-line quick revision. Be accurate, concise and student-friendly.`;
-    const result = await ai([{ role:"system", content:SYSTEM }, { role:"user", content:prompt }], { maxOutputTokens: 1400 });
+    const prompt = `Create exam-ready revision notes for ${className} ${subject}, topic "${topic}". Language: ${language}. Include a clear definition/core idea, detailed explanation, key points, important terms, examples or formulas where relevant, common exam points, and a 5-line quick revision. Be accurate, thorough, well-structured, and student-friendly. Do not unnecessarily shorten the notes.`;
+    const result = await ai([{ role:"system", content:SYSTEM }, { role:"user", content:prompt }], { maxOutputTokens: 5000 });
     res.json({ html: markdownToHtml(result.text), text: result.text, provider: result.provider });
   } catch (e) { console.error("/api/notes error:", e); res.status(503).json({ error:"Notes generation failed.", detail:e.message }); }
 });
@@ -172,7 +172,7 @@ app.post("/api/exam", async (req, res) => {
   try {
     const { className="", subject="", marks="50", difficulty="Medium", topics="", mix="MCQ + Short + Long" } = req.body;
     const prompt = `Create a complete school exam question paper. Class: ${className}. Subject: ${subject}. Total marks: ${marks}. Difficulty: ${difficulty}. Topics: ${topics || "relevant syllabus"}. Question mix: ${mix}. Make the marks add up to the requested total. Use clear sections and question numbering. Do not provide answers. Keep it realistic and sufficiently detailed for an actual practice paper.`;
-    const result = await ai([{ role:"system", content:SYSTEM }, { role:"user", content:prompt }], { maxOutputTokens: 2000, temperature: 0.3 });
+    const result = await ai([{ role:"system", content:SYSTEM }, { role:"user", content:prompt }], { maxOutputTokens: 6000, temperature: 0.3 });
     res.json({ html: `<div class="paper-head"><img src="/anantam-education-icon.png" alt="Anantam"><div><strong>ANANTAM EDU AI</strong><span>${esc(subject)} • ${esc(className)} • ${esc(marks)} Marks</span></div></div>${markdownToHtml(result.text)}`, text: result.text, provider: result.provider });
   } catch (e) { console.error("/api/exam error:", e); res.status(503).json({ error:"Exam generation failed.", detail:e.message }); }
 });
