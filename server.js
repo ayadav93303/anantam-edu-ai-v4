@@ -4,7 +4,7 @@ const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "12mb" }));
 
 // Allow the app to be hosted separately (for example on Netlify) while
 // keeping the Gemini API key safely on the Render server.
@@ -28,70 +28,54 @@ function esc(s = "") {
   }[c]));
 }
 
-function renderMath(s) {
-  // Convert common LaTeX emitted by Gemini into readable HTML so equations
-  // never appear as raw $...$, \text{}, \rightarrow, etc.
-  const clean = value => value
-    .replace(/\\text\{([^{}]*)\}/g, '$1')
-    .replace(/\\mathrm\{([^{}]*)\}/g, '$1')
-    .replace(/\\times/g, '×')
-    .replace(/\\cdot/g, '·')
-    .replace(/\\rightarrow/g, '→')
-    .replace(/\\to/g, '→')
-    .replace(/\\Rightarrow/g, '⇒')
-    .replace(/\\pm/g, '±')
-    .replace(/\\geq/g, '≥')
-    .replace(/\\leq/g, '≤')
-    .replace(/\\neq/g, '≠')
-    .replace(/\\pi/g, 'π')
-    .replace(/\\div/g, '÷')
-    .replace(/\\sqrt\{([^{}]+)\}/g, '√($1)')
-    .replace(/\\left/g, '')
-    .replace(/\\right/g, '')
-    .replace(/\\/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  const format = raw => {
-    let v = clean(raw);
-    // Handle an arrow with a label, including \xrightarrow{...}.
-    v = v.replace(/\\xrightarrow\{([^{}]*)\}/g, '→ <span class="eq-label">$1</span>');
-    v = v.replace(/([A-Za-z]+)_\{([^{}]+)\}/g, '$1<sub>$2</sub>');
-    v = v.replace(/([A-Za-z0-9)])_([A-Za-z0-9]+)/g, '$1<sub>$2</sub>');
-    v = v.replace(/([A-Za-z0-9)])\^\{([^{}]+)\}/g, '$1<sup>$2</sup>');
-    v = v.replace(/([A-Za-z0-9)])\^([A-Za-z0-9]+)/g, '$1<sup>$2</sup>');
-    return v;
-  };
-
-  // Display equations: $$...$$ or \[...\].
-  s = s.replace(/\$\$([\s\S]*?)\$\$/g, (_, x) => `<div class="equation">${format(x)}</div>`);
-  s = s.replace(/\\\[([\s\S]*?)\\\]/g, (_, x) => `<div class="equation">${format(x)}</div>`);
-  // Inline equations: $...$ or \( ... \).
-  s = s.replace(/\$([^$\n]+?)\$/g, (_, x) => `<span class="equation-inline">${format(x)}</span>`);
-  s = s.replace(/\\\(([^\n]*?)\\\)/g, (_, x) => `<span class="equation-inline">${format(x)}</span>`);
-  return s;
-}
-
-function inlineMd(s) {
+function inlineMd(s = "") {
   s = esc(s);
+  // Preserve math for MathJax after escaping HTML.
   s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
   s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
   s = s.replace(/__(.+?)__/g, "<strong>$1</strong>");
+  s = s.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
   s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
     '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-  return renderMath(s);
+  return s;
 }
 
 function markdownToHtml(md = "") {
+  // A clean, ChatGPT-like renderer for headings, lists, tables, quotes,
+  // code blocks and common LaTeX math. MathJax in index.html renders math.
   const lines = String(md).replace(/\r/g, "").split("\n");
-  let out = "", list = null, para = [];
+  let out = "", list = null, para = [], inCode = false, code = [];
   const closeList = () => { if (list === "ul") out += "</ul>"; if (list === "ol") out += "</ol>"; list = null; };
   const flush = () => { if (para.length) { out += `<p>${inlineMd(para.join(" "))}</p>`; para = []; } };
-  for (const raw of lines) {
+  const codeEscape = s => esc(s).replace(/\n/g, "\n");
+  const isTableSep = line => /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(line);
+  const cells = line => line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(x => x.trim());
+  for (let i=0; i<lines.length; i++) {
+    const raw = lines[i];
     const line = raw.trim();
+    if (line.startsWith("```")) {
+      flush(); closeList();
+      if (!inCode) { inCode = true; code = []; } else { out += `<pre><code>${codeEscape(code.join("\n"))}</code></pre>`; inCode = false; code = []; }
+      continue;
+    }
+    if (inCode) { code.push(raw); continue; }
     if (!line) { flush(); closeList(); continue; }
-    let m = line.match(/^(#{1,3})\s+(.+)$/);
-    if (m) { flush(); closeList(); const h = m[1].length + 1; out += `<h${h}>${inlineMd(m[2])}</h${h}>`; continue; }
+
+    // Markdown table
+    if (line.includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1].trim())) {
+      flush(); closeList();
+      const head = cells(line); i++;
+      out += `<div class="table-wrap"><table><thead><tr>${head.map(c=>`<th>${inlineMd(c)}</th>`).join("")}</tr></thead><tbody>`;
+      while (i + 1 < lines.length && lines[i + 1].trim().includes("|")) {
+        const next = lines[i + 1].trim();
+        if (!next || isTableSep(next)) { i++; continue; }
+        i++; const row = cells(next);
+        out += `<tr>${head.map((_,j)=>`<td>${inlineMd(row[j]||"")}</td>`).join("")}</tr>`;
+      }
+      out += `</tbody></table></div>`; continue;
+    }
+    let m = line.match(/^(#{1,4})\s+(.+)$/);
+    if (m) { flush(); closeList(); const h = Math.min(m[1].length + 1, 5); out += `<h${h}>${inlineMd(m[2])}</h${h}>`; continue; }
     if (/^[-*_]{3,}$/.test(line)) { flush(); closeList(); out += "<hr>"; continue; }
     m = line.match(/^[-*•]\s+(.+)$/);
     if (m) { flush(); if (list !== "ul") { closeList(); out += "<ul>"; list = "ul"; } out += `<li>${inlineMd(m[1])}</li>`; continue; }
@@ -100,6 +84,7 @@ function markdownToHtml(md = "") {
     if (line.startsWith(">")) { flush(); closeList(); out += `<blockquote>${inlineMd(line.slice(1).trim())}</blockquote>`; continue; }
     para.push(line);
   }
+  if (inCode) out += `<pre><code>${codeEscape(code.join("\n"))}</code></pre>`;
   flush(); closeList();
   return out || "<p>No answer was generated.</p>";
 }
@@ -107,10 +92,14 @@ function markdownToHtml(md = "") {
 function messagesToGemini(messages) {
   return messages
     .filter(x => x.role !== "system")
-    .map(x => ({
-      role: x.role === "assistant" ? "model" : "user",
-      parts: [{ text: String(x.content) }]
-    }));
+    .map(x => {
+      const parts = [];
+      if (x.image && x.image.data) {
+        parts.push({ inlineData: { mimeType: x.image.mimeType || "image/jpeg", data: x.image.data } });
+      }
+      parts.push({ text: String(x.content || "") });
+      return { role: x.role === "assistant" ? "model" : "user", parts };
+    });
 }
 
 async function gemini(messages, options = {}) {
@@ -126,7 +115,7 @@ async function gemini(messages, options = {}) {
     ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
     contents: messagesToGemini(messages),
     generationConfig: {
-      maxOutputTokens: options.maxOutputTokens ?? 4096,
+      maxOutputTokens: options.maxOutputTokens ?? 1000,
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {})
     }
   };
@@ -159,35 +148,54 @@ async function ai(messages, options = {}) {
   return { text, provider: "gemini" };
 }
 
-const SYSTEM = `You are Anantam Edu AI, a fast, friendly study assistant for students.
-The student's name is Amit.
+const SYSTEM = `You are Anantam Edu AI, a polished educational assistant. The current student's name will be supplied by the app when available.
 
-Give direct, accurate, useful answers. Match the student's language: English, Hindi, or natural Hinglish.
-For school questions, explain at the student's level and use examples when useful.
-For maths, show the essential steps and final answer.
-For science, give definitions, key points, and examples where useful.
-For exam questions, focus on marks-oriented answers.
+Give answers with the same clean, readable style a high-quality ChatGPT study answer would use. Match English, Hindi, or natural Hinglish used by the student.
 
-Formatting rules:
-- Use short headings only when helpful.
-- Use bullet points for lists, but do not turn every answer into a bullet list.
-- Use numbered steps for procedures.
-- Bold important terms with **double asterisks**.
-- Do not use hashtags as headings.
-- Do not add unnecessary introductions or conclusions.
-- Don't repeat the question.
-- Keep simple questions concise; give more detail when the question needs it.
-- Answer casual greetings naturally instead of producing a study-note format.`;
+GENERAL ANSWERS:
+- Start directly with the answer. Do not write unnecessary greetings or repeat the question.
+- Use a short **bold heading** only when it genuinely improves readability.
+- Use normal paragraphs for explanations; use bullets only for actual lists.
+- Use numbered steps for procedures, solutions, derivations, and algorithms.
+- For maths and physics, show equations on separate lines and show the calculation step-by-step, followed by a clearly labelled **Answer**.
+- For chemistry, write balanced equations clearly and preserve subscripts/superscripts using LaTeX when useful, e.g. $H_2O$, $x^2$, $\\rightarrow$.
+- For biology and theory subjects, use clear headings, short paragraphs, definitions, examples and key points where appropriate.
+- Never use hashtags (#) as headings.
+- Do not put every sentence into a bullet point.
+- Do not use excessive emojis.
+- Keep simple questions concise, but give complete detail when the user asks to explain, solve, teach, or answer in detail.
+- If the user asks for an exam-style answer, write it in a clean answer-writing format appropriate to the marks.
+
+NOTES:
+- Make notes visually structured with a title, headings/subheadings, definitions, explanations, examples/formulas and a quick revision section.
+- Do not make notes artificially short.
+
+QUESTION PAPERS:
+- Create a professional question paper with title, class, subject, time, full marks and clear instructions.
+- Organize questions into sections such as Section A, Section B and Section C when appropriate.
+- Number every question clearly and show marks beside questions.
+- Make the total marks add up exactly to the requested total.
+- Do not include answers unless explicitly requested.
+
+OUTPUT:
+Return clean Markdown. Use Markdown headings, bold text, ordered/unordered lists only when appropriate, tables when useful, fenced code blocks for code, and LaTeX math delimiters for equations.`;
+
 
 async function handleChat(req, res) {
   const message = String(req.body.message || "").trim().slice(0, 10000);
-  if (!message) return res.status(400).json({ error: "Please enter a question." });
-  console.log(`AI chat request: ${message.slice(0, 120)}`);
+  const image = req.body.image && req.body.image.data ? {
+    mimeType: String(req.body.image.mimeType || "image/jpeg").slice(0, 100),
+    data: String(req.body.image.data).replace(/^data:[^;]+;base64,/, "").slice(0, 9000000)
+  } : null;
+  if (!message && !image) return res.status(400).json({ error: "Please enter a question or attach an image." });
+  console.log(`AI chat request: ${(message || "[image]").slice(0, 120)}`);
   const history = Array.isArray(req.body.history) ? req.body.history.slice(-8) : [];
+  const profileName = String(req.body.profileName || "Student").trim().slice(0, 80) || "Student";
+  const personalizedSystem = SYSTEM + `\n\nThe student's name is ${profileName}. Use their name naturally only when it feels appropriate; never call them Amit unless their name is Amit.`;
   const messages = [
-    { role: "system", content: SYSTEM },
+    { role: "system", content: personalizedSystem },
     ...history.filter(x => ["user", "assistant"].includes(x.role)).map(x => ({ role: x.role, content: String(x.content).slice(0, 6000) })),
-    { role: "user", content: message }
+    { role: "user", content: message || "Please analyze this image and answer helpfully.", ...(image ? { image } : {}) }
   ];
   const result = await ai(messages, { maxOutputTokens: 4096 });
   console.log(`AI response provider: ${result.provider}`);
@@ -206,7 +214,7 @@ app.post("/api/chat", async (req, res) => {
 app.post("/api/notes", async (req, res) => {
   try {
     const { topic="", className="", subject="", language="English" } = req.body;
-    const prompt = `Create exam-ready revision notes for ${className} ${subject}, topic "${topic}". Language: ${language}. Include a clear definition/core idea, detailed explanation, key points, important terms, examples or formulas where relevant, common exam points, and a 5-line quick revision. Be accurate, thorough, well-structured, and student-friendly. Do not unnecessarily shorten the notes.`;
+    const prompt = `Create exam-ready revision notes for ${className} ${subject}, topic "${topic}". Language: ${language}. Include definition/core idea, key points, important terms, examples or formulas if relevant, common exam points, and a 3-line quick revision. Be accurate, thorough, well-structured and student-friendly. Give enough explanation for a student to study from the notes without needing another source.`;
     const result = await ai([{ role:"system", content:SYSTEM }, { role:"user", content:prompt }], { maxOutputTokens: 5000 });
     res.json({ html: markdownToHtml(result.text), text: result.text, provider: result.provider });
   } catch (e) { console.error("/api/notes error:", e); res.status(503).json({ error:"Notes generation failed.", detail:e.message }); }

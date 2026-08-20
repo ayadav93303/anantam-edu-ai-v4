@@ -9,6 +9,9 @@
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" type="image/png" href="/anantam-education-icon.png">
 <link rel="stylesheet" href="/style.css">
+
+<script>window.MathJax={tex:{inlineMath:[["$","$"] ,["\\(","\\)"]],displayMath:[["$$","$$"],["\\[","\\]"]]},options:{skipHtmlTags:["script","noscript","style","textarea","pre","code"]}};</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </head>
 <body>
 <div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
@@ -16,9 +19,9 @@
 <header class="topbar">
   <div class="welcome">
     <img class="tiny-logo" src="/anantam-education-icon.png" alt="Anantam Education">
-    <div><b>Hi Amit 👋</b><span>Welcome to Anantam Edu AI</span></div>
+    <div><b id="topName">Hi Student 👋</b><span>Welcome to Anantam Edu AI</span></div>
   </div>
-  <button id="themeBtn" class="round" aria-label="Theme">☾</button>
+  <div class="top-actions"><button class="round" onclick="show('history')" aria-label="Chat history">☷</button><button class="round" id="themeBtn" aria-label="Theme">☾</button></div>
 </header>
 
 <main>
@@ -53,7 +56,8 @@
   <div id="messages" class="messages">
     <div class="message ai"><img src="/anantam-education-icon.png" alt="Anantam"><div class="bubble"><b>Anantam Edu AI</b><p>Hi Amit! 👋 What are you studying today?</p><div class="quick"><button onclick="chatWith('Explain photosynthesis in simple Hinglish')">Explain a topic</button><button onclick="chatWith('Give me 5 exam practice questions')">Practice</button><button onclick="show('notes')">Make notes</button><button onclick="show('exam')">Make exam paper</button></div></div></div>
   </div>
-  <form id="chatForm" class="composer"><input id="chatInput" autocomplete="off" placeholder="Ask anything about your studies…"><button class="send">→</button></form>
+  <div id="imagePreviewWrap" class="image-preview-wrap" hidden><img id="imagePreview" alt="Selected image"><button id="removeImage" type="button">×</button></div>
+  <form id="chatForm" class="composer"><input type="file" id="imageInput" accept="image/*" hidden><button type="button" id="imageBtn" class="attach" title="Add image">＋</button><input id="chatInput" autocomplete="off" placeholder="Ask anything about your studies…"><button type="button" id="micBtn" class="attach" title="Speak">🎙</button><button class="send" aria-label="Send">→</button></form>
 </section>
 
 <section id="notes" class="screen">
@@ -97,10 +101,13 @@
 </section>
 
 <section id="profile" class="screen">
-  <div class="card profile"><img src="/anantam-education-logo.png" alt="Anantam Education"><h1>Anantam Edu AI</h1><p>Welcome, Amit.</p>
-    <div class="profile-box"><b>Student profile</b><div><span>Name</span><strong>Amit</strong></div><div><span>Learning mode</span><strong>English • Hindi • Hinglish</strong></div></div>
+  <div class="card profile"><img src="/anantam-education-logo.png" alt="Anantam Education"><h1>Your Profile</h1><p id="profileWelcome">Welcome, Student.</p>
+    <form id="profileForm" class="profile-form"><label>Your name<input id="profileName" maxlength="40" placeholder="Enter your name"></label><button class="primary full">Save Profile</button></form>
+    <div class="profile-box"><b>Student profile</b><div><span>Name</span><strong id="profileDisplay">Your name</strong></div><div><span>Learning mode</span><strong>English • Hindi • Hinglish</strong></div></div>
   </div>
 </section>
+
+<section id="history" class="screen"><div class="title"><div><h1>Chat History</h1><p>Your previous conversations on this device</p></div><button class="primary" onclick="startNewChat()">+ New Chat</button></div><div id="historyList" class="history-list"></div></section>
 </main>
 
 <nav class="bottom">
