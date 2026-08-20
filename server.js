@@ -28,6 +28,50 @@ function esc(s = "") {
   }[c]));
 }
 
+function renderMath(s) {
+  // Convert common LaTeX emitted by Gemini into readable HTML so equations
+  // never appear as raw $...$, \text{}, \rightarrow, etc.
+  const clean = value => value
+    .replace(/\\text\{([^{}]*)\}/g, '$1')
+    .replace(/\\mathrm\{([^{}]*)\}/g, '$1')
+    .replace(/\\times/g, '×')
+    .replace(/\\cdot/g, '·')
+    .replace(/\\rightarrow/g, '→')
+    .replace(/\\to/g, '→')
+    .replace(/\\Rightarrow/g, '⇒')
+    .replace(/\\pm/g, '±')
+    .replace(/\\geq/g, '≥')
+    .replace(/\\leq/g, '≤')
+    .replace(/\\neq/g, '≠')
+    .replace(/\\pi/g, 'π')
+    .replace(/\\div/g, '÷')
+    .replace(/\\sqrt\{([^{}]+)\}/g, '√($1)')
+    .replace(/\\left/g, '')
+    .replace(/\\right/g, '')
+    .replace(/\\/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const format = raw => {
+    let v = clean(raw);
+    // Handle an arrow with a label, including \xrightarrow{...}.
+    v = v.replace(/\\xrightarrow\{([^{}]*)\}/g, '→ <span class="eq-label">$1</span>');
+    v = v.replace(/([A-Za-z]+)_\{([^{}]+)\}/g, '$1<sub>$2</sub>');
+    v = v.replace(/([A-Za-z0-9)])_([A-Za-z0-9]+)/g, '$1<sub>$2</sub>');
+    v = v.replace(/([A-Za-z0-9)])\^\{([^{}]+)\}/g, '$1<sup>$2</sup>');
+    v = v.replace(/([A-Za-z0-9)])\^([A-Za-z0-9]+)/g, '$1<sup>$2</sup>');
+    return v;
+  };
+
+  // Display equations: $$...$$ or \[...\].
+  s = s.replace(/\$\$([\s\S]*?)\$\$/g, (_, x) => `<div class="equation">${format(x)}</div>`);
+  s = s.replace(/\\\[([\s\S]*?)\\\]/g, (_, x) => `<div class="equation">${format(x)}</div>`);
+  // Inline equations: $...$ or \( ... \).
+  s = s.replace(/\$([^$\n]+?)\$/g, (_, x) => `<span class="equation-inline">${format(x)}</span>`);
+  s = s.replace(/\\\(([^\n]*?)\\\)/g, (_, x) => `<span class="equation-inline">${format(x)}</span>`);
+  return s;
+}
+
 function inlineMd(s) {
   s = esc(s);
   s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
@@ -35,7 +79,7 @@ function inlineMd(s) {
   s = s.replace(/__(.+?)__/g, "<strong>$1</strong>");
   s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
     '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-  return s;
+  return renderMath(s);
 }
 
 function markdownToHtml(md = "") {
