@@ -211,21 +211,39 @@ const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-i
 async function generateGeminiImage(prompt) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("GEMINI_API_KEY is not configured on Render.");
-  const r = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+
+  // Gemini's native image generation uses generateContent with image response
+  // modalities. See Google's current Gemini image-generation documentation.
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent`;
+  const r = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": key
+    },
     body: JSON.stringify({
-      model: GEMINI_IMAGE_MODEL,
-      input: String(prompt).slice(0, 5000),
-      response_format: { type: "image", mime_type: "image/png", aspect_ratio: "1:1", image_size: "1K" }
+      contents: [{ parts: [{ text: String(prompt).slice(0, 5000) }] }],
+      generationConfig: {
+        responseModalities: ["IMAGE"]
+      }
     })
   });
+
   const raw = await r.text();
-  if (!r.ok) throw new Error(`Gemini image ${r.status}: ${raw.slice(0, 1600)}`);
+  if (!r.ok) throw new Error(`Gemini image ${r.status}: ${raw.slice(0, 1800)}`);
+
   const data = JSON.parse(raw);
-  const image = data.output_image;
-  if (!image || !image.data) throw new Error("Gemini did not return an image.");
-  return { text: "Here is your generated image.", imageData: `data:${image.mime_type || "image/png"};base64,${image.data}` };
+  const parts = (data.candidates || [])
+    .flatMap(c => (c.content && c.content.parts) || []);
+
+  const imagePart = parts.find(p => p.inlineData && p.inlineData.data);
+  if (!imagePart) throw new Error("Gemini did not return an image.");
+
+  const mime = imagePart.inlineData.mimeType || "image/png";
+  return {
+    text: "Here is your generated image.",
+    imageData: `data:${mime};base64,${imagePart.inlineData.data}`
+  };
 }
 
 app.post("/api/generate-image", async (req, res) => {

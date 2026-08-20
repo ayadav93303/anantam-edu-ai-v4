@@ -81,14 +81,31 @@ function setInputText(text){
 function setupMic(){
   const btn=$("#micBtn");
   if(!btn)return;
+
+  // Native Android bridge (preferred inside the APK).
+  if(window.AnantamNative && typeof window.AnantamNative.startMic === "function"){
+    btn.addEventListener("click",()=>window.AnantamNative.startMic());
+    window.setAnantamSpeechText=setInputText;
+    return;
+  }
+
   const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(SpeechRecognition){
-    recognition=new SpeechRecognition(); recognition.lang="en-IN"; recognition.interimResults=true; recognition.continuous=false;
+    recognition=new SpeechRecognition();
+    recognition.lang="en-IN";
+    recognition.interimResults=true;
+    recognition.continuous=false;
     recognition.onstart=()=>{btn.classList.add("recording");setStatus("● Listening…")};
     recognition.onend=()=>{btn.classList.remove("recording");setStatus("● Ready")};
     recognition.onerror=()=>{btn.classList.remove("recording");setStatus("● Ready")};
-    recognition.onresult=e=>{let text="";for(let i=e.resultIndex;i<e.results.length;i++)text+=e.results[i][0].transcript;setInputText(text)};
-    btn.addEventListener("click",()=>{try{recognition.start()}catch{try{recognition.stop()}catch{}}});
+    recognition.onresult=e=>{
+      let text="";
+      for(let i=e.resultIndex;i<e.results.length;i++) text+=e.results[i][0].transcript;
+      setInputText(text);
+    };
+    btn.addEventListener("click",()=>{
+      try{recognition.start()}catch{try{recognition.stop()}catch{}}
+    });
   } else if(window.AndroidMic){
     btn.addEventListener("click",()=>window.AndroidMic.start());
   } else {
@@ -108,10 +125,21 @@ function loadImageFile(file){
 function setupImage(){
   const input=$("#imageInput"), camera=$("#cameraInput"), btn=$("#imageBtn"), camBtn=$("#cameraBtn"), remove=$("#removeImage");
   btn?.addEventListener("click",()=>input?.click());
-  camBtn?.addEventListener("click",()=>camera?.click());
+  camBtn?.addEventListener("click",()=>{
+    if(window.AnantamNative && typeof window.AnantamNative.startCamera==="function"){
+      window.AnantamNative.startCamera();
+    } else {
+      camera?.click();
+    }
+  });
   input?.addEventListener("change",()=>{loadImageFile(input.files?.[0]);});
   camera?.addEventListener("change",()=>{loadImageFile(camera.files?.[0]);});
-  remove?.addEventListener("click",()=>{pendingImage=null;if(input)input.value="";if(camera)camera.value="";$("#imagePreview").parentElement.hidden=true});
+  remove?.addEventListener("click",()=>{
+    pendingImage=null;
+    if(input)input.value="";
+    if(camera)camera.value="";
+    $("#imagePreview").parentElement.hidden=true;
+  });
 }
 
 function looksLikeImageRequest(text=""){
@@ -161,3 +189,16 @@ $("#profileForm")?.addEventListener("submit",e=>{e.preventDefault();profile.name
 $("#themeBtn")?.addEventListener("click",()=>{document.body.classList.toggle("light");$("#themeBtn").textContent=document.body.classList.contains("light")?'☀':'☾'});
 
 renderProfile(); setupMic(); setupImage(); renderChat();
+
+window.setAnantamImage = function(dataUrl){
+  if(!dataUrl) return;
+  const comma=dataUrl.indexOf(",");
+  if(comma<0) return;
+  const header=dataUrl.slice(0,comma);
+  const data=dataUrl.slice(comma+1);
+  const mime=(header.match(/^data:([^;]+)/)||[])[1] || "image/jpeg";
+  pendingImage={mimeType:mime,data,preview:dataUrl};
+  const preview=$("#imagePreview");
+  if(preview){preview.src=dataUrl;preview.parentElement.hidden=false;}
+  setStatus("● Image ready");
+};

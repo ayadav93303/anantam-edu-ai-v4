@@ -1,6 +1,6 @@
 {
   "name": "anantam-edu-ai",
-  "version": "4.1.0",
+  "version": "4.3.0",
   "private": true,
   "description": "Anantam Edu AI - Gemini-powered student AI assistant",
   "main": "server.js",
