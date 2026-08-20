@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json({ limit: "1mb" }));
 
 // Allow the app to be hosted separately (for example on Netlify) while
-// keeping all API keys safely on the Render server.
+// keeping the Gemini API key safely on the Render server.
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -18,7 +18,9 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname, "public"), { extensions: ["html"] }));
 
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.6-luna";
+// Gemini 3.6 Flash currently has a free tier for Gemini Developer API.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 function esc(s = "") {
   return String(s).replace(/[&<>"']/g, c => ({
@@ -58,62 +60,59 @@ function markdownToHtml(md = "") {
   return out || "<p>No answer was generated.</p>";
 }
 
-function messagesToInput(messages) {
-  return messages.filter(x => x.role !== "system").map(x => ({
-    role: x.role === "assistant" ? "assistant" : "user",
-    content: [{ type: "input_text", text: String(x.content) }]
-  }));
+function messagesToGemini(messages) {
+  return messages
+    .filter(x => x.role !== "system")
+    .map(x => ({
+      role: x.role === "assistant" ? "model" : "user",
+      parts: [{ text: String(x.content) }]
+    }));
 }
 
-function openAIOutputText(data) {
-  if (typeof data.output_text === "string") return data.output_text;
-  const chunks = [];
-  for (const item of (data.output || [])) {
-    for (const c of (item.content || [])) {
-      if (typeof c.text === "string") chunks.push(c.text);
-    }
-  }
-  return chunks.join("").trim();
-}
-
-async function openai(messages, options = {}) {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) throw new Error("OPENAI_API_KEY is not configured on Render.");
+async function gemini(messages, options = {}) {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) throw new Error("GEMINI_API_KEY is not configured on Render.");
 
   const system = messages
     .filter(x => x.role === "system")
-    .map(x => x.content)
+    .map(x => String(x.content))
     .join("\n\n");
 
   const body = {
-    model: OPENAI_MODEL,
-    ...(system ? { instructions: system } : {}),
-    input: messagesToInput(messages),
-    max_output_tokens: options.maxOutputTokens ?? 1000
+    ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+    contents: messagesToGemini(messages),
+    generationConfig: {
+      maxOutputTokens: options.maxOutputTokens ?? 1000,
+      ...(options.temperature !== undefined ? { temperature: options.temperature } : {})
+    }
   };
 
-  const r = await fetch("https://api.openai.com/v1/responses", {
+  const r = await fetch(GEMINI_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${key}`
+      "x-goog-api-key": key
     },
     body: JSON.stringify(body)
   });
 
   const raw = await r.text();
-  if (!r.ok) throw new Error(`OpenAI ${r.status}: ${raw.slice(0, 1600)}`);
+  if (!r.ok) throw new Error(`Gemini ${r.status}: ${raw.slice(0, 1800)}`);
 
   const data = JSON.parse(raw);
-  const text = openAIOutputText(data);
-  if (!text) throw new Error("OpenAI returned an empty response.");
+  const text = (data.candidates || [])
+    .flatMap(c => (c.content && c.content.parts) || [])
+    .map(p => p.text || "")
+    .join("")
+    .trim();
 
+  if (!text) throw new Error("Gemini returned an empty response.");
   return text;
 }
 
 async function ai(messages, options = {}) {
-  const text = await openai(messages, options);
-  return { text, provider: "openai" };
+  const text = await gemini(messages, options);
+  return { text, provider: "gemini" };
 }
 
 const SYSTEM = `You are Anantam Edu AI, a fast, friendly study assistant for students.
@@ -152,7 +151,7 @@ async function handleChat(req, res) {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, openai: !!process.env.OPENAI_API_KEY, openaiModel: OPENAI_MODEL });
+  res.json({ ok: true, gemini: !!process.env.GEMINI_API_KEY, geminiModel: GEMINI_MODEL });
 });
 
 app.post("/api/chat", async (req, res) => {
