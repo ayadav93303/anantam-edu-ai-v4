@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#07111f">
+<meta name="description" content="Anantam Edu AI — your AI study partner.">
+<title>Anantam Edu AI</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/png" href="/anantam-education-icon.png">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="bg-orb orb1"></div><div class="bg-orb orb2"></div>
+
+<header class="topbar">
+  <div class="welcome">
+    <img class="tiny-logo" src="/anantam-education-icon.png" alt="Anantam Education">
+    <div><b>Hi Amit 👋</b><span>Welcome to Anantam Edu AI</span></div>
+  </div>
+  <button id="themeBtn" class="round" aria-label="Theme">☾</button>
+</header>
+
+<main>
+<section id="home" class="screen active">
+  <div class="hero card">
+    <img class="main-logo" src="/anantam-education-logo.png" alt="Anantam Education">
+    <div class="brand"><img src="/anantam-education-icon.png" alt=""><div><b>Anantam Edu AI</b><span>Learn Smarter. Understand Better.</span></div></div>
+    <h1>Your personal <span>AI study partner.</span></h1>
+    <p>Ask questions, create notes, prepare exam papers and practice with an AI built for students.</p>
+    <button class="primary" onclick="openChat()">Ask Anantam AI <span>→</span></button>
+  </div>
+
+  <h2>AI Study Tools</h2>
+  <div class="grid">
+    <button class="tool card" onclick="show('notes')"><i>▤</i><b>Notes Generator</b><small>Topic → clean revision notes</small></button>
+    <button class="tool card" onclick="show('exam')"><i>✎</i><b>Exam Prep</b><small>Generate a complete question paper</small></button>
+    <button class="tool card" onclick="openChat()"><i>✦</i><b>Ask Anantam AI</b><small>Explain, solve and revise</small></button>
+    <button class="tool card" onclick="show('practice')"><i>✓</i><b>Practice</b><small>Test yourself before exams</small></button>
+  </div>
+
+  <h2>Subjects</h2>
+  <div class="chips">
+    <button onclick="chatWith('Help me with Mathematics')">📐 Maths</button>
+    <button onclick="chatWith('Help me with Science')">🔬 Science</button>
+    <button onclick="chatWith('Help me with English')">📚 English</button>
+    <button onclick="chatWith('Help me with Hindi')">📖 Hindi</button>
+  </div>
+</section>
+
+<section id="chat" class="screen">
+  <div class="title"><div><h1>Ask Anantam AI</h1><p>Fast, friendly study help</p></div><span id="status" class="status">● Ready</span></div>
+  <div id="messages" class="messages">
+    <div class="message ai"><img src="/anantam-education-icon.png" alt="Anantam"><div class="bubble"><b>Anantam Edu AI</b><p>Hi Amit! 👋 What are you studying today?</p><div class="quick"><button onclick="chatWith('Explain photosynthesis in simple Hinglish')">Explain a topic</button><button onclick="chatWith('Give me 5 exam practice questions')">Practice</button><button onclick="show('notes')">Make notes</button><button onclick="show('exam')">Make exam paper</button></div></div></div>
+  </div>
+  <form id="chatForm" class="composer"><input id="chatInput" autocomplete="off" placeholder="Ask anything about your studies…"><button class="send">→</button></form>
+</section>
+
+<section id="notes" class="screen">
+  <div class="title"><div><h1>Notes Generator</h1><p>Exam-ready notes in seconds</p></div></div>
+  <div class="card form">
+    <div class="two">
+      <label>Class<select id="noteClass"><option>Class 6</option><option>Class 7</option><option selected>Class 8</option><option>Class 9</option><option>Class 10</option></select></label>
+      <label>Subject<select id="noteSubject"><option>Mathematics</option><option selected>Science</option><option>English</option><option>Hindi</option></select></label>
+    </div>
+    <label>Topic / Chapter<input id="noteTopic" placeholder="e.g. Force and Pressure"></label>
+    <label>Language<select id="noteLang"><option>English</option><option>Hinglish</option><option>Hindi</option></select></label>
+    <button class="primary full" onclick="generateNotes()">Generate Notes with AI</button>
+  </div>
+  <div id="noteOutput"></div>
+</section>
+
+<section id="exam" class="screen">
+  <div class="title"><div><h1>Exam Prep</h1><p>Create a realistic practice paper</p></div></div>
+  <div class="card form">
+    <div class="two">
+      <label>Class<select id="examClass"><option>Class 6</option><option>Class 7</option><option selected>Class 8</option><option>Class 9</option><option>Class 10</option></select></label>
+      <label>Subject<select id="examSubject"><option>Mathematics</option><option selected>Science</option><option>English</option><option>Hindi</option></select></label>
+    </div>
+    <div class="two">
+      <label>Total Marks<select id="marks"><option>25</option><option selected>50</option><option>80</option><option>100</option></select></label>
+      <label>Difficulty<select id="difficulty"><option>Easy</option><option selected>Medium</option><option>Hard</option></select></label>
+    </div>
+    <label>Chapters / Topics<input id="examTopics" placeholder="e.g. Force, Pressure, Friction"></label>
+    <label>Question mix<select id="mix"><option selected>MCQ + Short + Long</option><option>Short + Long</option><option>MCQ</option></select></label>
+    <button class="primary full" onclick="generateExam()">Generate Question Paper with AI</button>
+  </div>
+  <div id="examOutput"></div>
+</section>
+
+<section id="practice" class="screen">
+  <div class="title"><div><h1>Practice</h1><p>Quick exam-style practice</p></div></div>
+  <div class="card practice"><span class="badge">SCIENCE • CLASS 8</span><h2>Which gas do green plants mainly absorb during photosynthesis?</h2>
+    <div class="answers"><button onclick="pick(this,false)">A. Oxygen</button><button onclick="pick(this,false)">B. Nitrogen</button><button onclick="pick(this,true)">C. Carbon dioxide</button><button onclick="pick(this,false)">D. Hydrogen</button></div>
+    <div id="result"></div>
+  </div>
+</section>
+
+<section id="profile" class="screen">
+  <div class="card profile"><img src="/anantam-education-logo.png" alt="Anantam Education"><h1>Anantam Edu AI</h1><p>Welcome, Amit.</p>
+    <div class="profile-box"><b>Student profile</b><div><span>Name</span><strong>Amit</strong></div><div><span>Learning mode</span><strong>English • Hindi • Hinglish</strong></div></div>
+  </div>
+</section>
+</main>
+
+<nav class="bottom">
+<button class="nav active" data-id="home" onclick="show('home')"><span>⌂</span><small>Home</small></button>
+<button class="nav" data-id="chat" onclick="show('chat')"><span>✦</span><small>AI</small></button>
+<button class="nav" data-id="exam" onclick="show('exam')"><span>✎</span><small>Exam</small></button>
+<button class="nav" data-id="notes" onclick="show('notes')"><span>▤</span><small>Notes</small></button>
+<button class="nav" data-id="profile" onclick="show('profile')"><span>●</span><small>Profile</small></button>
+</nav>
+<script src="/app.js"></script>
+</body>
+</html>
