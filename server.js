@@ -19,7 +19,6 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname, "public"), { extensions: ["html"] }));
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.6-luna";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
 function esc(s = "") {
   return String(s).replace(/[&<>"']/g, c => ({
@@ -80,62 +79,41 @@ function openAIOutputText(data) {
 async function openai(messages, options = {}) {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new Error("OPENAI_API_KEY is not configured on Render.");
-  const system = messages.filter(x => x.role === "system").map(x => x.content).join("\n\n");
+
+  const system = messages
+    .filter(x => x.role === "system")
+    .map(x => x.content)
+    .join("\n\n");
+
   const body = {
     model: OPENAI_MODEL,
     ...(system ? { instructions: system } : {}),
     input: messagesToInput(messages),
-    temperature: options.temperature ?? 0.35,
     max_output_tokens: options.maxOutputTokens ?? 1000
   };
+
   const r = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${key}`
+    },
     body: JSON.stringify(body)
   });
+
   const raw = await r.text();
-  if (!r.ok) throw new Error(`OpenAI ${r.status}: ${raw.slice(0, 1200)}`);
+  if (!r.ok) throw new Error(`OpenAI ${r.status}: ${raw.slice(0, 1600)}`);
+
   const data = JSON.parse(raw);
   const text = openAIOutputText(data);
   if (!text) throw new Error("OpenAI returned an empty response.");
-  return text;
-}
 
-async function gemini(messages, options = {}) {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new Error("GEMINI_API_KEY is not configured on Render.");
-  const system = messages.filter(x => x.role === "system").map(x => x.content).join("\n\n");
-  const contents = messages.filter(x => x.role !== "system").map(x => ({
-    role: x.role === "assistant" ? "model" : "user",
-    parts: [{ text: String(x.content) }]
-  }));
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(key)}`;
-  const body = {
-    ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
-    contents,
-    generationConfig: { temperature: options.temperature ?? 0.35, maxOutputTokens: options.maxOutputTokens ?? 1000 }
-  };
-  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const raw = await r.text();
-  if (!r.ok) throw new Error(`Gemini ${r.status}: ${raw.slice(0, 1200)}`);
-  const data = JSON.parse(raw);
-  const text = data.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("") || "";
-  if (!text) throw new Error("Gemini returned an empty response.");
   return text;
 }
 
 async function ai(messages, options = {}) {
-  const errors = [];
-  // OpenAI first, Gemini as an automatic fallback.
-  if (process.env.OPENAI_API_KEY) {
-    try { return { text: await openai(messages, options), provider: "openai" }; }
-    catch (e) { console.error("OpenAI failed:", e.message); errors.push(e.message); }
-  }
-  if (process.env.GEMINI_API_KEY) {
-    try { return { text: await gemini(messages, options), provider: "gemini" }; }
-    catch (e) { console.error("Gemini failed:", e.message); errors.push(e.message); }
-  }
-  throw new Error(errors.join(" | ") || "No AI provider is configured.");
+  const text = await openai(messages, options);
+  return { text, provider: "openai" };
 }
 
 const SYSTEM = `You are Anantam Edu AI, a fast, friendly study assistant for students.
@@ -174,7 +152,7 @@ async function handleChat(req, res) {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, openai: !!process.env.OPENAI_API_KEY, gemini: !!process.env.GEMINI_API_KEY, openaiModel: OPENAI_MODEL, geminiModel: GEMINI_MODEL });
+  res.json({ ok: true, openai: !!process.env.OPENAI_API_KEY, openaiModel: OPENAI_MODEL });
 });
 
 app.post("/api/chat", async (req, res) => {
