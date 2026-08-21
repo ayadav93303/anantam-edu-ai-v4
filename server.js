@@ -361,6 +361,118 @@ Rules:
 Return JSON only.`;
 }
 
+async function stripJsonFences(text = '') {
+  return String(text ?? '')
+    .replace(/^\s*```(?:json)?\s*/i, '')
+    .replace(/\s*```\s*$/i, '')
+    .trim();
+}
+
+function extractBalancedJson(text = '') {
+  const s = stripJsonFences(text);
+  const starts = ['[', '{'];
+  let best = -1;
+  for (const ch of starts) {
+    const i = s.indexOf(ch);
+    if (i >= 0 && (best < 0 || i < best)) best = i;
+  }
+  if (best < 0) throw new Error('No JSON object/array found.');
+
+  const open = s[best];
+  const close = open === '[' ? ']' : '}';
+  let depth = 0, quote = false, escaped = false;
+  for (let i = best; i < s.length; i++) {
+    const c = s[i];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (c === '\\') escaped = true;
+      else if (c === '"') quote = false;
+      continue;
+    }
+    if (c === '"') { quote = true; continue; }
+    if (c === open) depth++;
+    else if (c === close) {
+      depth--;
+      if (depth === 0) return s.slice(best, i + 1);
+    }
+  }
+  throw new Error('Incomplete JSON returned by AI.');
+}
+
+function repairCommonJson(text = '') {
+  let s = stripJsonFences(text);
+  // Remove trailing commas before ] or }.
+  s = s.replace(/,\s*([}\]])/g, '$1');
+  // Add a missing comma between adjacent JSON properties/values in common
+  // model output, while leaving text inside quoted strings untouched.
+  let out = '', quote = false, escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    out += c;
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (c === '\\') escaped = true;
+      else if (c === '"') quote = false;
+      continue;
+    }
+    if (c === '"') { quote = true; continue; }
+    if (c === '}' || c === ']') {
+      let j = i + 1;
+      while (j < s.length && /\s/.test(s[j])) j++;
+      // Object property missing comma: }"key" or ]"key".
+      if ((s[j] === '"') && (s[j-1] === '}' || s[j-1] === ']')) out += ',';
+    }
+  }
+  // The previous pass handles value-boundary cases poorly when the missing
+  // comma is between a quoted scalar and the next property. Use a conservative
+  // regex limited to JSON key boundaries.
+  out = out.replace(/("(?:\\.|[^"\\])*")\s+(?=")/g, '$1, ');
+  return out;
+}
+
+function parsePracticeResponse(raw = '') {
+  const candidates = [];
+  const cleaned = stripJsonFences(raw);
+  candidates.push(cleaned);
+  try { candidates.push(extractBalancedJson(cleaned)); } catch {}
+  for (const candidate of [...candidates]) candidates.push(repairCommonJson(candidate));
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed && Array.isArray(parsed.questions)) return parsed.questions;
+    } catch {}
+  }
+
+  // Last-resort recovery: extract complete top-level objects from an array-like
+  // response. This salvages a practice set if one malformed item is present.
+  const s = cleaned;
+  const objects = [];
+  let start = -1, depth = 0, quote = false, escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (c === '\\') escaped = true;
+      else if (c === '"') quote = false;
+      continue;
+    }
+    if (c === '"') { quote = true; continue; }
+    if (c === '{') { if (depth === 0) start = i; depth++; }
+    else if (c === '}' && depth > 0) {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        const objText = repairCommonJson(s.slice(start, i + 1));
+        try { objects.push(JSON.parse(objText)); } catch {}
+        start = -1;
+      }
+    }
+  }
+  if (objects.length) return objects;
+  throw new Error('Invalid practice JSON');
+}
+
 async function generatePractice(body) {
   const count = Math.min(Math.max(Number(body.count) || 10, 1), 30);
   const type = cleanText(body.questionType || body.mix,80) || 'MCQ';
@@ -379,11 +491,12 @@ async function generatePractice(body) {
   }, {timeoutMs:170000});
   const raw = extractText(data);
   let questions;
-  try { questions = JSON.parse(raw); }
-  catch {
-    const start = raw.indexOf('['), end = raw.lastIndexOf(']');
-    if (start < 0 || end <= start) throw new Error('The AI returned an invalid practice set.');
-    questions = JSON.parse(raw.slice(start,end+1));
+  try {
+    questions = parsePracticeResponse(raw);
+  } catch (parseError) {
+    // One extra provider call is deliberately avoided here: malformed JSON is
+    // a formatting problem, not a reason to spend another free-tier request.
+    throw new Error('The AI returned an invalid practice set. Please try again.');
   }
   if (!Array.isArray(questions) || questions.length === 0) throw new Error('The AI returned no practice questions.');
   questions = questions.slice(0,count).map(q => ({
