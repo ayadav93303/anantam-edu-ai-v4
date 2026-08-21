@@ -5,8 +5,8 @@ const PORT = Number(process.env.PORT || 10000);
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
 
 // Stable defaults. You can override these in Render environment variables.
-const TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || 'gemini-2.5-flash';
-const TEXT_FALLBACKS = (process.env.GEMINI_TEXT_FALLBACKS || 'gemini-2.5-flash-lite,gemini-3.6-flash')
+const TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || 'gemini-3.5-flash-lite';
+const TEXT_FALLBACKS = (process.env.GEMINI_TEXT_FALLBACKS || 'gemini-3.1-flash-lite,gemini-3.6-flash')
   .split(',').map(s => s.trim()).filter(Boolean);
 const IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
 
@@ -109,11 +109,59 @@ function isRetryableStatus(status) {
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
+// Free-tier protection: serialize AI calls so bursts from the app do not
+// immediately consume the project's RPM quota. Identical recent requests
+// are served from memory without another Gemini call.
+let aiQueue = Promise.resolve();
+let lastGeminiRequestAt = 0;
+const MIN_GEMINI_GAP_MS = 3500;
+const responseCache = new Map();
+const CACHE_TTL_MS = 15 * 60 * 1000;
+const MAX_CACHE_ITEMS = 80;
+
+function cacheKey(model, contents, config) {
+  try { return JSON.stringify({model, contents, config}); } catch { return ''; }
+}
+
+function getCached(key) {
+  if (!key) return null;
+  const hit = responseCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.time > CACHE_TTL_MS) { responseCache.delete(key); return null; }
+  return hit.data;
+}
+
+function setCached(key, data) {
+  if (!key) return;
+  if (responseCache.size >= MAX_CACHE_ITEMS) {
+    const first = responseCache.keys().next().value;
+    if (first) responseCache.delete(first);
+  }
+  responseCache.set(key, {time:Date.now(), data});
+}
+
+function enqueueAI(task) {
+  const run = aiQueue.then(task, task);
+  aiQueue = run.catch(() => undefined);
+  return run;
+}
+
+function retryAfterMs(error) {
+  const n = Number(error?.retryAfterSec);
+  if (Number.isFinite(n) && n > 0) return Math.min(Math.max(n * 1000, 3000), 65000);
+  const m = String(error?.message || '').match(/retry in ([0-9.]+)s/i);
+  if (m) return Math.min(Math.max(Number(m[1]) * 1000, 3000), 65000);
+  return 30000;
+}
+
 async function callGeminiModel(model, contents, config = {}, timeoutMs = 140000) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const wait = MIN_GEMINI_GAP_MS - (Date.now() - lastGeminiRequestAt);
+    if (wait > 0) await sleep(wait);
+    lastGeminiRequestAt = Date.now();
     const response = await fetch(url, {
       method: 'POST',
       headers: {'Content-Type':'application/json', 'x-goog-api-key':GEMINI_API_KEY},
@@ -126,6 +174,9 @@ async function callGeminiModel(model, contents, config = {}, timeoutMs = 140000)
     if (!response.ok) {
       const err = new Error(data?.error?.message || `Gemini returned HTTP ${response.status}`);
       err.status = response.status;
+      const retryHeader = response.headers.get('retry-after');
+      const retryMatch = String(err.message).match(/retry in ([0-9.]+)s/i);
+      err.retryAfterSec = retryHeader ? Number(retryHeader) : (retryMatch ? Number(retryMatch[1]) : 0);
       throw err;
     }
     return data;
@@ -135,20 +186,50 @@ async function callGeminiModel(model, contents, config = {}, timeoutMs = 140000)
 async function geminiGenerate(contents, config = {}, options = {}) {
   requireKey();
   const models = [...new Set([options.model || TEXT_MODEL, ...(options.fallbacks || TEXT_FALLBACKS)])];
-  let lastError = null;
-  for (const model of models) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
+  const key = cacheKey(models[0], contents, config);
+  const cached = getCached(key);
+  if (cached) return cached;
+
+  return enqueueAI(async () => {
+    // Re-check cache after waiting in the queue; another request may have
+    // produced the same response while this one was waiting.
+    const queuedCached = getCached(key);
+    if (queuedCached) return queuedCached;
+
+    let lastError = null;
+    for (const model of models) {
       try {
-        return await callGeminiModel(model, contents, config, options.timeoutMs || 140000);
+        const data = await callGeminiModel(model, contents, config, options.timeoutMs || 170000);
+        setCached(key, data);
+        return data;
       } catch (error) {
         lastError = error;
-        console.error(`Gemini ${model} attempt ${attempt} failed:`, error.message);
-        if (!isRetryableStatus(error.status) && !String(error.message).toLowerCase().includes('fetch failed')) break;
-        if (attempt < 2) await sleep(900 * attempt);
+        console.error(`Gemini ${model} failed:`, error.message);
+
+        // 429 means the provider has rate-limited this project. Do not
+        // hammer the same model with immediate retries. Try another configured
+        // model once; if it is also rate-limited, return the provider's cooldown
+        // to the client.
+        if (error.status === 429) {
+          lastError = error;
+          continue;
+        }
+
+        // Transient server/network failures get one short exponential retry.
+        if ([408,409,425,500,502,503,504].includes(error.status) || String(error.message).toLowerCase().includes('fetch failed')) {
+          await sleep(1200);
+          try {
+            const data = await callGeminiModel(model, contents, config, options.timeoutMs || 170000);
+            setCached(key, data);
+            return data;
+          } catch (retryError) {
+            lastError = retryError;
+          }
+        }
       }
     }
-  }
-  throw lastError || new Error('AI provider did not return a response.');
+    throw lastError || new Error('AI provider did not return a response.');
+  });
 }
 
 function extractText(data) {
@@ -353,11 +434,21 @@ async function generateImage(body) {
 
 app.get('/',(req,res)=>res.json({ok:true,service:'Anantam Edu AI',version:'9.0-stable-ai'}));
 app.get('/health',(req,res)=>res.json({ok:true,configured:Boolean(GEMINI_API_KEY),textModel:TEXT_MODEL,fallbacks:TEXT_FALLBACKS,imageModel:IMAGE_MODEL,features:['chat','image','notes','exam','practice','syllabus']}));
-app.post('/api/chat',async(req,res)=>{try{res.json(await runChat(req.body||{}));}catch(e){console.error(e);res.status(503).json({error:e.message||'AI service unavailable'});}});
-app.post('/api/notes',async(req,res)=>{try{res.json(await generateNotes(req.body||{}));}catch(e){console.error(e);res.status(503).json({error:e.message||'Notes generation failed'});}});
-app.post('/api/exam',async(req,res)=>{try{res.json(await generateExam(req.body||{}));}catch(e){console.error(e);res.status(503).json({error:e.message||'Exam generation failed'});}});
-app.post('/api/practice',async(req,res)=>{try{res.json(await generatePractice(req.body||{}));}catch(e){console.error(e);res.status(503).json({error:e.message||'Practice generation failed'});}});
-app.post('/api/syllabus',async(req,res)=>{try{res.json(await generateSyllabus(req.body||{}));}catch(e){console.error(e);res.status(503).json({error:e.message||'Syllabus generation failed'});}});
-app.post('/api/generate-image',async(req,res)=>{try{res.json(await generateImage(req.body||{}));}catch(e){console.error(e);res.status(503).json({error:e.message||'Image generation failed'});}});
+function sendAIError(res, e, fallback) {
+  console.error(e);
+  const status = e?.status === 429 ? 429 : 503;
+  const retry = e?.retryAfterSec ? Math.ceil(Number(e.retryAfterSec)) : undefined;
+  const raw = String(e?.message || fallback);
+  const message = e?.status === 429
+    ? `Gemini rate limit reached. Please wait about ${retry || 30} seconds before trying again.`
+    : raw;
+  res.status(status).json({error:message, retryAfterSec:retry});
+}
+app.post('/api/chat',async(req,res)=>{try{res.json(await runChat(req.body||{}));}catch(e){sendAIError(res,e,'AI service unavailable');}});
+app.post('/api/notes',async(req,res)=>{try{res.json(await generateNotes(req.body||{}));}catch(e){sendAIError(res,e,'Notes generation failed');}});
+app.post('/api/exam',async(req,res)=>{try{res.json(await generateExam(req.body||{}));}catch(e){sendAIError(res,e,'Exam generation failed');}});
+app.post('/api/practice',async(req,res)=>{try{res.json(await generatePractice(req.body||{}));}catch(e){sendAIError(res,e,'Practice generation failed');}});
+app.post('/api/syllabus',async(req,res)=>{try{res.json(await generateSyllabus(req.body||{}));}catch(e){sendAIError(res,e,'Syllabus generation failed');}});
+app.post('/api/generate-image',async(req,res)=>{try{res.json(await generateImage(req.body||{}));}catch(e){sendAIError(res,e,'Image generation failed');}});
 
 app.listen(PORT,'0.0.0.0',()=>console.log(`Anantam Edu AI backend v9 listening on port ${PORT}`));

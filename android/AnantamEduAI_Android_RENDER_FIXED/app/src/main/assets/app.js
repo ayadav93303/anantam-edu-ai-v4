@@ -211,7 +211,11 @@ async function apiRequest(path, options={}, cfg={}){
       try{data=raw?JSON.parse(raw):{};}catch(_){throw new Error(`Server returned an invalid response (${r.status}).`);}
       if(r.ok) return data;
       const msg=data.error||data.message||`Request failed (${r.status})`;
-      const transient=[408,409,425,429,500,502,503,504].includes(r.status);
+      const transient=[408,409,425,500,502,503,504].includes(r.status);
+      if(r.status===429){
+        const waitSec=Math.min(Math.max(Number(data.retryAfterSec)||30,5),65);
+        throw new Error(`AI rate limit reached. Please wait about ${Math.ceil(waitSec)} seconds and try again.`);
+      }
       if(!transient || attempt===retries) throw new Error(msg);
       lastErr=new Error(msg);
     }catch(e){
@@ -219,7 +223,9 @@ async function apiRequest(path, options={}, cfg={}){
       lastErr=e.name==="AbortError"?new Error("The AI server is taking longer than usual. Retrying automatically…"):e;
       if(attempt===retries) break;
     }
-    await new Promise(resolve=>setTimeout(resolve,Math.min(1800*Math.pow(2,attempt-1),10000)));
+    if(lastErr && !String(lastErr.message||'').startsWith('AI quota is busy.')){
+      await new Promise(resolve=>setTimeout(resolve,Math.min(1800*Math.pow(2,attempt-1),10000)));
+    }
   }
   throw lastErr||new Error("AI service is temporarily unavailable. Please try again.");
 }
@@ -243,7 +249,7 @@ async function askAI(message,image){
   setStatus("● Thinking…");
   const history=(activeChat?.messages||[]).slice(-8).map(m=>({role:m.role,content:m.text||m.html||""}));
   const payload={message,history,profileName:profile.name}; if(image)payload.image=image;
-  const data=await postJSON("/api/chat",payload,{retries:4,timeout:150000});
+  const data=await postJSON("/api/chat",payload,{retries:2,timeout:150000});
   const c=currentChat();
   if(c.messages.length===0)c.title=(message||"Image question").slice(0,55);
   c.messages.push({role:"user",text:message||"Image question",html:message||"",image:image?.preview||null});
@@ -365,7 +371,7 @@ function looksLikeImageRequest(text=""){
 }
 
 async function generateImage(prompt){
-  return await postJSON("/api/generate-image",{prompt,profileName:profile.name},{retries:4,timeout:180000});
+  return await postJSON("/api/generate-image",{prompt,profileName:profile.name},{retries:2,timeout:180000});
 }
 
 window.setAnantamSpeechText=setInputText;
@@ -406,7 +412,7 @@ async function generateNotes(){
     const d=await postJSON("/api/notes",{
       topic,className,subject,language,
       detail:fullNotesInstruction(className,subject,topic)
-    },{retries:4,timeout:180000});
+    },{retries:2,timeout:180000});
     if(!d.html && !d.text) throw new Error("The AI returned no notes.");
     setGeneratedHTML(out,`<div class="note-card">${d.html||esc(d.text)}</div>`);
   }catch(e){
@@ -416,7 +422,7 @@ async function generateNotes(){
 
 async function generateAllChapterNotes(out,className,subject,language){
   out.innerHTML='<div class="note-card"><div class="loader"></div><b>Finding the chapters…</b><p>Preparing the full syllabus for '+esc(className)+' '+esc(subject)+'.</p></div>';
-  const syllabusData=await postJSON("/api/syllabus",{className,subject,language},{retries:4,timeout:150000});
+  const syllabusData=await postJSON("/api/syllabus",{className,subject,language},{retries:2,timeout:150000});
   const chapters=Array.isArray(syllabusData.chapters)?syllabusData.chapters.filter(x=>typeof x==="string"&&x.trim()).slice(0,25):[];
   if(!chapters.length) throw new Error("Could not determine the chapter list.");
   out.innerHTML=`<div class="note-card"><b>Full syllabus: ${esc(className)} ${esc(subject)}</b><p>Generating ${chapters.length} chapters one by one so the app does not fail on an oversized response.</p><div id="allChapterProgress"></div></div>`;
@@ -428,12 +434,13 @@ async function generateAllChapterNotes(out,className,subject,language){
       const d=await postJSON("/api/notes",{
         topic:chapters[i],className,subject,language,
         detail:fullNotesInstruction(className,subject,chapters[i])+`\nThis is chapter ${i+1} of ${chapters.length}. Return only this chapter's notes.`
-      },{retries:4,timeout:180000});
+      },{retries:2,timeout:180000});
       results.push(`<section class="full-chapter"><h2>${i+1}. ${esc(chapters[i])}</h2>${d.html||`<p>${esc(d.text||"")}</p>`}</section>`);
     }catch(e){
       results.push(`<section class="full-chapter"><h2>${i+1}. ${esc(chapters[i])}</h2><p><b>This chapter could not be generated right now.</b> ${esc(e.message||"Please try again later.")}</p></section>`);
     }
     if(progress)progress.innerHTML=`<p><b>Completed ${i+1} of ${chapters.length}:</b> ${esc(chapters[i])}</p>`;
+    if(i < chapters.length - 1) await new Promise(resolve => setTimeout(resolve, 3500));
   }
   out.innerHTML=`<div class="note-card full-syllabus"><h1>${esc(className)} ${esc(subject)} — Full Syllabus Notes</h1>${results.join('<hr>')}</div>`;
   formatGeneratedContainer(out);
@@ -446,7 +453,7 @@ async function generateExam(){
       className:$("#examClass").value,subject:$("#examSubject").value,marks:$("#marks").value,
       difficulty:$("#difficulty").value,topics:$("#examTopics").value.trim(),mix:$("#mix").value,
       format:"STRICTLY ORGANIZED SCHOOL QUESTION PAPER. Put Q1, then its complete question. For MCQs put A, B, C, D on four separate lines vertically. Never put two options side-by-side. Leave spacing between questions. Use clear sections, numbering, marks and an answer key when appropriate. Do not use raw LaTeX or dollar signs."
-    },{retries:4,timeout:180000});
+    },{retries:2,timeout:180000});
     if(!d.html&&!d.text)throw new Error("The AI returned no question paper.");
     setGeneratedHTML(out,`<div class="paper">${d.html||esc(d.text)}</div>`);
   }catch(e){out.innerHTML=`<div class="note-card"><b>Question paper generation failed.</b><p>${esc(e.message||"AI service is temporarily unavailable.")}</p><button class="primary" onclick="generateExam()">Try again</button></div>`}
@@ -553,7 +560,7 @@ ${schema}
 Return ONLY a valid JSON array. No markdown, no explanation, no extra text.`;
 
   try{
-    const d=await postJSON("/api/practice",{className,subject,topic,count,difficulty,questionType:type,language},{retries:4,timeout:180000});
+    const d=await postJSON("/api/practice",{className,subject,topic,count,difficulty,questionType:type,language},{retries:2,timeout:180000});
     const questions=Array.isArray(d.questions)?d.questions:cleanPracticeJson(d.text||"");
     renderPracticeQuestions(questions,{className,subject,topic,difficulty,language});
   }catch(e){

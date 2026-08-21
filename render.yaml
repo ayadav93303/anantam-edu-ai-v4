@@ -10,8 +10,8 @@ services:
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_TEXT_MODEL
-        value: gemini-2.5-flash
+        value: gemini-3.5-flash-lite
       - key: GEMINI_TEXT_FALLBACKS
-        value: gemini-2.5-flash-lite,gemini-3.6-flash
+        value: gemini-3.5-flash-lite-lite,gemini-3.6-flash
       - key: GEMINI_IMAGE_MODEL
         value: gemini-3.1-flash-image

@@ -24,7 +24,7 @@ This package contains both sides of the app:
 2. Keep `package.json`, `server.js` and `render.yaml` in the repository root.
 3. In Render, deploy the web service from that repository.
 4. Set `GEMINI_API_KEY` in Render Environment.
-5. Recommended text model: `gemini-2.5-flash`.
+5. Recommended text model: `gemini-3.5-flash-lite` (stable).
 6. Leave the fallback models as configured unless you need different models.
 7. Wait until Render shows the service as **Live**.
 8. Open `/health` on the Render URL. It should show `ok: true` and `configured: true`.
@@ -48,3 +48,19 @@ If you create a different Render service URL, change the `API_BASE` constant nea
 ## Important limitation
 
 No app can guarantee zero failures when an external AI provider has an outage, quota limit, invalid API key, or network failure. This version is designed to handle normal Render wake-up delays and temporary AI-provider errors automatically and to show a useful error when the external service itself is unavailable.
+
+
+## Free-tier reliability mode
+
+This build uses Gemini 3.5 Flash-Lite by default and serializes AI requests to avoid burst traffic. It also caches identical recent requests and respects Gemini 429 retry windows instead of repeatedly hammering an exhausted quota. Gemini rate limits are project-level and can still be exhausted; no software can bypass a provider quota.
+
+
+## Important Render setting after upload
+
+In Render → Environment, make sure these variables are set to:
+- `GEMINI_TEXT_MODEL` = `gemini-3.5-flash-lite`
+- `GEMINI_TEXT_FALLBACKS` = `gemini-3.1-flash-lite,gemini-3.6-flash`
+
+If an old value such as `gemini-2.5-flash` or `gemini-3.6-flash` already exists in Render Environment, update/remove it because an existing environment variable overrides `render.yaml`.
+
+This package cannot bypass Google's Gemini quota. When Google returns HTTP 429, the app now stops multiplying requests and shows a clear cooldown message instead of repeatedly consuming quota. Full-syllabus generation also spaces chapter requests to reduce RPM bursts.
