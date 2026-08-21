@@ -438,7 +438,7 @@ function parsePracticeResponse(raw = '') {
   // Remove Markdown JSON fences
   let cleaned = raw
     .replace(/json/gi, '')
-    .replace(//g, '')
+    .replace(/```/g, '')
     .trim();
 
   const candidates = [];
