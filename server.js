@@ -423,186 +423,83 @@ function repairCommonJson(text = '') {
       if ((s[j] === '"') && (s[j-1] === '}' || s[j-1] === ']')) out += ',';
     }
   }
-  // The previous pass handles value-boundary cases poorly when the missing
-  // comma is between a quoted scalar and the next property. Use a conservative
-  // regex limited to JSON key boundaries.
-  out = out.replace(/("(?:\\.|[^"\\])*")\s+(?=")/g, '$1, ');
+  // Repair missing commas between adjacent JSON string values/elements.
+  // This specifically handles outputs such as ["A" "B"] or
+  // {"a":"x" "b":"y"} without touching quoted text.
+  out = out.replace(/("(?:\\.|[^"\\])*")\s*(?=")/g, '$1, ');
   return out;
 }
 
 function parsePracticeResponse(raw = '') {
-  if (!raw || typeof raw !== 'string') {
-    throw new Error('Empty practice response from AI');
-  }
-
-  // Remove Markdown JSON fences
-  let cleaned = raw
-    .replace(/json/gi, '')
-    .replace(/```/g, '')
-    .trim();
-
   const candidates = [];
-
-  // Candidate 1: complete response
+  const cleaned = stripJsonFences(raw);
   candidates.push(cleaned);
-
-  // Candidate 2: extract the largest balanced JSON object/array
-  function extractJson(text) {
-    let start = -1;
-    let depth = 0;
-    let quote = false;
-    let escaped = false;
-
-    for (let i = 0; i < text.length; i++) {
-      const c = text[i];
-
-      if (quote) {
-        if (escaped) {
-          escaped = false;
-        } else if (c === '\\') {
-          escaped = true;
-        } else if (c === '"') {
-          quote = false;
-        }
-        continue;
-      }
-
-      if (c === '"') {
-        quote = true;
-        continue;
-      }
-
-      if (c === '[' || c === '{') {
-        if (depth === 0) start = i;
-        depth++;
-      } else if (c === ']' || c === '}') {
-        depth--;
-
-        if (depth === 0 && start >= 0) {
-          return text.slice(start, i + 1);
-        }
-      }
-    }
-
-    return null;
-  }
-
-  const extracted = extractJson(cleaned);
-  if (extracted) candidates.push(extracted);
-
-  // Repair common Gemini JSON formatting problems
-  function repairJson(text) {
-    return text
-      // Remove trailing commas
-      .replace(/,\s*([}\]])/g, '$1')
-      // Remove accidental control characters
-      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ')
-      .trim();
-  }
+  try { candidates.push(extractBalancedJson(cleaned)); } catch {}
+  for (const candidate of [...candidates]) candidates.push(repairCommonJson(candidate));
 
   for (const candidate of candidates) {
-    // Try normal JSON first
     try {
       const parsed = JSON.parse(candidate);
-
       if (Array.isArray(parsed)) return parsed;
-
-      if (
-        parsed &&
-        Array.isArray(parsed.questions)
-      ) {
-        return parsed.questions;
-      }
-    } catch (_) {}
-
-    // Try repaired JSON
-    try {
-      const repaired = repairJson(candidate);
-      const parsed = JSON.parse(repaired);
-
-      if (Array.isArray(parsed)) return parsed;
-
-      if (
-        parsed &&
-        Array.isArray(parsed.questions)
-      ) {
-        return parsed.questions;
-      }
-    } catch (_) {}
+      if (parsed && Array.isArray(parsed.questions)) return parsed.questions;
+    } catch {}
   }
 
-  // Last-resort recovery:
-  // Extract individual complete question objects.
+  // Last-resort recovery: extract complete top-level objects from an array-like
+  // response. This salvages a practice set if one malformed item is present.
+  const s = cleaned;
   const objects = [];
-  let depth = 0;
-  let start = -1;
-  let quote = false;
-  let escaped = false;
-
-  for (let i = 0; i < cleaned.length; i++) {
-    const c = cleaned[i];
-
+  let start = -1, depth = 0, quote = false, escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
     if (quote) {
-      if (escaped) {
-        escaped = false;
-      } else if (c === '\\') {
-        escaped = true;
-      } else if (c === '"') {
-        quote = false;
-      }
+      if (escaped) escaped = false;
+      else if (c === '\\') escaped = true;
+      else if (c === '"') quote = false;
       continue;
     }
-
-    if (c === '"') {
-      quote = true;
-      continue;
-    }
-
-    if (c === '{') {
-      if (depth === 0) start = i;
-      depth++;
-    } else if (c === '}') {
+    if (c === '"') { quote = true; continue; }
+    if (c === '{') { if (depth === 0) start = i; depth++; }
+    else if (c === '}' && depth > 0) {
       depth--;
-
       if (depth === 0 && start >= 0) {
-        const piece = cleaned.slice(start, i + 1);
-
-        try {
-          objects.push(JSON.parse(piece));
-        } catch (_) {
-          try {
-            objects.push(JSON.parse(repairJson(piece)));
-          } catch (_) {}
-        }
-
+        const objText = repairCommonJson(s.slice(start, i + 1));
+        try { objects.push(JSON.parse(objText)); } catch {}
         start = -1;
       }
     }
   }
-
-  if (objects.length > 0) {
-    return objects;
-  }
-
-  throw new Error(
-    'The AI returned an invalid practice set. Please try again.'
-  );
+  if (objects.length) return objects;
+  throw new Error('Invalid practice JSON');
 }
 
 async function generatePractice(body) {
   const count = Math.min(Math.max(Number(body.count) || 10, 1), 30);
   const type = cleanText(body.questionType || body.mix,80) || 'MCQ';
   const prompt = practiceSchemaPrompt(body, count);
+  // Use an object wrapper instead of a root JSON array. This is more reliable
+  // across Gemini model variants while still allowing the client to receive
+  // the same { questions: [...] } result from this endpoint.
   const responseSchema = {
-    type:'ARRAY', items:{type:'OBJECT', properties:{
-      question:{type:'STRING'},
-      options:{type:'ARRAY', items:{type:'STRING'}},
-      answerIndex:{type:'INTEGER'},
-      answer:{type:'STRING'},
-      explanation:{type:'STRING'}
-    }, required:['question']}
+    type:'OBJECT',
+    properties:{
+      questions:{
+        type:'ARRAY',
+        items:{type:'OBJECT', properties:{
+          question:{type:'STRING'},
+          options:{type:'ARRAY', items:{type:'STRING'}},
+          answerIndex:{type:'INTEGER'},
+          answer:{type:'STRING'},
+          explanation:{type:'STRING'}
+        }, required:['question']}
+      }
+    },
+    required:['questions']
   };
-  const data = await geminiGenerate([{role:'user',parts:[{text:prompt}]}], {
+  const structuredPrompt = `${prompt}
+
+OUTPUT FORMAT: Return one JSON object only, exactly in this form: {"questions":[{"question":"...","options":["..."],"answerIndex":0,"answer":"...","explanation":"..."}]} . Do not add markdown fences or any text outside the JSON object.`;
+  const data = await geminiGenerate([{role:'user',parts:[{text:structuredPrompt}]}], {
     generationConfig:{maxOutputTokens:Math.min(7500, 1200 + count * 220), responseMimeType:'application/json', responseSchema}
   }, {timeoutMs:170000});
   const raw = extractText(data);
