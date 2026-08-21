@@ -400,36 +400,62 @@ function extractBalancedJson(text = '') {
 }
 
 function repairCommonJson(text = '') {
-  let s = stripJsonFences(text);
-  // Remove trailing commas before ] or }.
-  s = s.replace(/,\s*([}\]])/g, '$1');
-  // Add a missing comma between adjacent JSON properties/values in common
-  // model output, while leaving text inside quoted strings untouched.
-  let out = '', quote = false, escaped = false;
-  for (let i = 0; i < s.length; i++) {
+  let s = stripJsonFences(text).trim();
+
+  // Repair only common JSON formatting mistakes produced by AI output.
+  // These replacements happen outside quoted strings so student text is not changed.
+  let out = '';
+  let quote = false;
+  let escaped = false;
+  let i = 0;
+
+  while (i < s.length) {
     const c = s[i];
-    out += c;
+
     if (quote) {
+      out += c;
       if (escaped) escaped = false;
       else if (c === '\\') escaped = true;
       else if (c === '"') quote = false;
+      i++;
       continue;
     }
-    if (c === '"') { quote = true; continue; }
-    if (c === '}' || c === ']') {
-      let j = i + 1;
-      while (j < s.length && /\s/.test(s[j])) j++;
-      // Object property missing comma: }"key" or ]"key".
-      if ((s[j] === '"') && (s[j-1] === '}' || s[j-1] === ']')) out += ',';
-    }
-  }
-  // Repair missing commas between adjacent JSON string values/elements.
-  // This specifically handles outputs such as ["A" "B"] or
-  // {"a":"x" "b":"y"} without touching quoted text.
-  out = out.replace(/("(?:\\.|[^"\\])*")\s*(?=")/g, '$1, ');
-  return out;
-}
 
+    if (c === '"') {
+      quote = true;
+      out += c;
+      i++;
+      continue;
+    }
+
+    // Remove trailing commas before a closing array/object.
+    if (c === ',') {
+      let j = i + 1;
+      while (j < s.length && /\\s/.test(s[j])) j++;
+      if (s[j] === '}' || s[j] === ']') {
+        i++;
+        continue;
+      }
+    }
+
+    out += c;
+    i++;
+  }
+
+  // Add commas between adjacent JSON values/objects when the model omitted one.
+  // Examples:  } {  -> }, {     ] { -> ], {
+  //           "a" "b" -> "a", "b"
+  //           1 "b" -> 1, "b"
+  out = out
+    .replace(/}\s*{/g, '}, {')
+    .replace(/]\s*{/g, '], {')
+    .replace(/}\s*"/g, '}, "')
+    .replace(/]\s*"/g, '], "')
+    .replace(/(true|false|null|-?\\d+(?:\\.\\d+)?)\s*"/g, '$1, "')
+    .replace(/("(?:\\.|[^"\\])*")\s*(?=")/g, '$1, ');
+
+  return out.trim();
+}
 function parsePracticeResponse(raw = '') {
   const candidates = [];
   const cleaned = stripJsonFences(raw);
