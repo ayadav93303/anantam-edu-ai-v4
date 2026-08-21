@@ -431,46 +431,162 @@ function repairCommonJson(text = '') {
 }
 
 function parsePracticeResponse(raw = '') {
-  const candidates = [];
-  const cleaned = stripJsonFences(raw);
-  candidates.push(cleaned);
-  try { candidates.push(extractBalancedJson(cleaned)); } catch {}
-  for (const candidate of [...candidates]) candidates.push(repairCommonJson(candidate));
-
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate);
-      if (Array.isArray(parsed)) return parsed;
-      if (parsed && Array.isArray(parsed.questions)) return parsed.questions;
-    } catch {}
+  if (!raw || typeof raw !== 'string') {
+    throw new Error('Empty practice response from AI');
   }
 
-  // Last-resort recovery: extract complete top-level objects from an array-like
-  // response. This salvages a practice set if one malformed item is present.
-  const s = cleaned;
+  // Remove Markdown JSON fences
+  let cleaned = raw
+    .replace(/json/gi, '')
+    .replace(//g, '')
+    .trim();
+
+  const candidates = [];
+
+  // Candidate 1: complete response
+  candidates.push(cleaned);
+
+  // Candidate 2: extract the largest balanced JSON object/array
+  function extractJson(text) {
+    let start = -1;
+    let depth = 0;
+    let quote = false;
+    let escaped = false;
+
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+
+      if (quote) {
+        if (escaped) {
+          escaped = false;
+        } else if (c === '\\') {
+          escaped = true;
+        } else if (c === '"') {
+          quote = false;
+        }
+        continue;
+      }
+
+      if (c === '"') {
+        quote = true;
+        continue;
+      }
+
+      if (c === '[' || c === '{') {
+        if (depth === 0) start = i;
+        depth++;
+      } else if (c === ']' || c === '}') {
+        depth--;
+
+        if (depth === 0 && start >= 0) {
+          return text.slice(start, i + 1);
+        }
+      }
+    }
+
+    return null;
+  }
+
+  const extracted = extractJson(cleaned);
+  if (extracted) candidates.push(extracted);
+
+  // Repair common Gemini JSON formatting problems
+  function repairJson(text) {
+    return text
+      // Remove trailing commas
+      .replace(/,\s*([}\]])/g, '$1')
+      // Remove accidental control characters
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ')
+      .trim();
+  }
+
+  for (const candidate of candidates) {
+    // Try normal JSON first
+    try {
+      const parsed = JSON.parse(candidate);
+
+      if (Array.isArray(parsed)) return parsed;
+
+      if (
+        parsed &&
+        Array.isArray(parsed.questions)
+      ) {
+        return parsed.questions;
+      }
+    } catch (_) {}
+
+    // Try repaired JSON
+    try {
+      const repaired = repairJson(candidate);
+      const parsed = JSON.parse(repaired);
+
+      if (Array.isArray(parsed)) return parsed;
+
+      if (
+        parsed &&
+        Array.isArray(parsed.questions)
+      ) {
+        return parsed.questions;
+      }
+    } catch (_) {}
+  }
+
+  // Last-resort recovery:
+  // Extract individual complete question objects.
   const objects = [];
-  let start = -1, depth = 0, quote = false, escaped = false;
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
+  let depth = 0;
+  let start = -1;
+  let quote = false;
+  let escaped = false;
+
+  for (let i = 0; i < cleaned.length; i++) {
+    const c = cleaned[i];
+
     if (quote) {
-      if (escaped) escaped = false;
-      else if (c === '\\') escaped = true;
-      else if (c === '"') quote = false;
+      if (escaped) {
+        escaped = false;
+      } else if (c === '\\') {
+        escaped = true;
+      } else if (c === '"') {
+        quote = false;
+      }
       continue;
     }
-    if (c === '"') { quote = true; continue; }
-    if (c === '{') { if (depth === 0) start = i; depth++; }
-    else if (c === '}' && depth > 0) {
+
+    if (c === '"') {
+      quote = true;
+      continue;
+    }
+
+    if (c === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (c === '}') {
       depth--;
+
       if (depth === 0 && start >= 0) {
-        const objText = repairCommonJson(s.slice(start, i + 1));
-        try { objects.push(JSON.parse(objText)); } catch {}
+        const piece = cleaned.slice(start, i + 1);
+
+        try {
+          objects.push(JSON.parse(piece));
+        } catch (_) {
+          try {
+            objects.push(JSON.parse(repairJson(piece)));
+          } catch (_) {}
+        }
+
         start = -1;
       }
     }
   }
-  if (objects.length) return objects;
-  throw new Error('Invalid practice JSON');
+
+  if (objects.length > 0) {
+    return objects;
+  }
+
+  throw new Error(
+    'The AI returned an invalid practice set. Please try again.'
+  );
 }
 
 async function generatePractice(body) {
