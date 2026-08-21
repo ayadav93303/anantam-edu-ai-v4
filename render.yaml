@@ -1,12 +1,17 @@
 services:
   - type: web
-    name: anantam-edu-ai
+    name: anantam-edu-ai-v4
     runtime: node
     plan: free
     buildCommand: npm install
     startCommand: npm start
+    healthCheckPath: /health
     envVars:
       - key: GEMINI_API_KEY
         sync: false
-      - key: GEMINI_MODEL
+      - key: GEMINI_TEXT_MODEL
         value: gemini-2.5-flash
+      - key: GEMINI_TEXT_FALLBACKS
+        value: gemini-2.5-flash-lite,gemini-3.6-flash
+      - key: GEMINI_IMAGE_MODEL
+        value: gemini-3.1-flash-image
